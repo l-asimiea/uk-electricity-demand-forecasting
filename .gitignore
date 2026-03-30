@@ -98,3 +98,5 @@ dagster_home/logs/
 __pycache__/
 *.pyc
 .venv/
+
+*.ipynb
