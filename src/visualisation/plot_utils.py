@@ -1,20 +1,20 @@
-
-""" 
-This script contains standard user plotting settings to create 
-exploratory and result oriented visualations throughout the project. 
+"""
+This script contains standard user plotting settings to create
+exploratory and result oriented visualations throughout the project.
 """
 
-## Import Libraries 
+## Import Libraries
 import plotly.express as px
 import plotly.io as pio
+
 
 # ----------------------------------------------------------
 def plotly_user_standard_settings(pio, px):
     """
-    This function enforces the standard settings for plotly plots 
+    This function enforces the standard settings for plotly plots
     created throughout at various stages in the project
     """
-    pio.templates.default = 'simple_white'
+    pio.templates.default = "simple_white"
     px.defaults.width = 800
     px.defaults.height = 500
 
@@ -33,7 +33,7 @@ def plotly_user_standard_settings(pio, px):
                 linewidth=1,
                 ticks="outside",
                 tickcolor="black",
-                mirror=True
+                mirror=True,
             ),
             yaxis=dict(
                 showgrid=True,
@@ -44,31 +44,15 @@ def plotly_user_standard_settings(pio, px):
                 linewidth=1,
                 ticks="outside",
                 tickcolor="black",
-                mirror=True
+                mirror=True,
             ),
-            margin=dict(
-                l=60,
-                r=30,
-                t=30,
-                b=60
-            ),
-            legend=dict(
-                font=dict(size=12, color="black")
-            )
+            margin=dict(l=60, r=30, t=30, b=60),
+            legend=dict(font=dict(size=12, color="black")),
         )
     )
 
     # Register the template and set it as default
     pio.templates["excel_style"] = excel_style_template
     pio.templates.default = "excel_style"
-    
+
     return pio
-
-
-
-
-
-
-
-
-

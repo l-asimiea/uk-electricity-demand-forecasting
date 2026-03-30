@@ -6,47 +6,64 @@ import os
 import plotly.express as px
 import plotly.io as pio
 from src.visualisation.plot_utils import plotly_user_standard_settings
+
 plotly_user_standard_settings(pio, px)
 from src.features.feature_utils import create_lag_features
 
 # Settings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 plot_save_path = os.path.join(project_root, "reports/figures/")
 
+
 # Forecast function
-def make_forecasts(trained_model, prediction_days:int, plot_save=False):
-    """ 
-    This function uses a provided trained model and number of 
-    prediction days to create electricity demand forecasts based on cleaned 
-    and processed historical Transmission System Demand (TSD) data. 
-    
-    Args: 
+def make_forecasts(trained_model, prediction_days: int, plot_save=False):
+    """
+    This function uses a provided trained model and number of
+    prediction days to create electricity demand forecasts based on cleaned
+    and processed historical Transmission System Demand (TSD) data.
+
+    Args:
     trained_model:      the model used for forecast creation
     prediction_days:    the number of days to forecast
     plot_save:          option to save generated plot
-    
+
     Return:
     fig:                plot of the historic and forecasted electricty demand
     """
-    
+
     # Load data used for model training as primary dataset
     data_file_path = f"{project_root}/data/processed/uk_data_fe_processed.pkl"
     print(f"Loading data from {data_file_path}")
-    df = pd.read_pickle(data_file_path) 
-    
-    df = df[['lag_1day', 'lag_1hour', 'lag_1week', 
-             'lag_1year', 'lag_2year', 'rolling_mean_1day','tsd']].copy()
-    
+    df = pd.read_pickle(data_file_path)
+
+    df = df[
+        [
+            "lag_1day",
+            "lag_1hour",
+            "lag_1week",
+            "lag_1year",
+            "lag_2year",
+            "rolling_mean_1day",
+            "tsd",
+        ]
+    ].copy()
+
     # Fit trained model on all of the primary dataset
     print("Using features from the model training stage...")
-    features = ['lag_1day', 'lag_1hour', 'lag_1week', 
-                'lag_1year', 'lag_2year', 'rolling_mean_1day']
-    target = 'tsd'
+    features = [
+        "lag_1day",
+        "lag_1hour",
+        "lag_1week",
+        "lag_1year",
+        "lag_2year",
+        "rolling_mean_1day",
+    ]
+    target = "tsd"
     X_Train = df[features].dropna()
     y_Train = df[target].dropna().loc[X_Train.index]
     trained_model.fit(X_Train, y_Train)
-    
+
     print("Creating future space for forecasting...")
     df_last_datetime = df.index.max()
     next_datetime = df_last_datetime + pd.Timedelta(minutes=30)
@@ -55,75 +72,83 @@ def make_forecasts(trained_model, prediction_days:int, plot_save=False):
     else:
         future = pd.date_range(
             start=next_datetime,
-            end=next_datetime + datetime.timedelta(days = prediction_days),
-            freq = "30min"
-            )
+            end=next_datetime + datetime.timedelta(days=prediction_days),
+            freq="30min",
+        )
     future_df = pd.DataFrame(index=future)
-    
-    
+
     # This is only needed if temporal features are present in df - commented when not needed
-    #datapoints_per_day = 48
-    #df_last_period = df['period'].iloc[-1]
-    #future_datasteps = len(future_df) #datapoints_per_day * prediction_days
-    #future_df['period'] = [(df_last_period + i - 1)%datapoints_per_day+1 for i in range(1, (future_datasteps)+1)]
-    
-    
-    future_df['isFuture'] = True
-    df['isFuture'] = False
-    
+    # datapoints_per_day = 48
+    # df_last_period = df['period'].iloc[-1]
+    # future_datasteps = len(future_df) #datapoints_per_day * prediction_days
+    # future_df['period'] = [(df_last_period + i - 1)%datapoints_per_day+1 for i in range(1, (future_datasteps)+1)]
+
+    future_df["isFuture"] = True
+    df["isFuture"] = False
+
     # Combined df and future_df
     past_and_future_df = pd.concat([df, future_df])
-    
+
     # Reprocess time and lag features
     print("Reprocessing time and lag features for past and forecast timeframe...")
-    
+
     # build to populate missing values in the future section and avoid clipping
-    target_map = past_and_future_df['tsd'].to_dict()
-    past_and_future_df['control_lag'] = (past_and_future_df.index - pd.Timedelta(days=prediction_days)).map(target_map)
-    past_and_future_df['control_lag'] = past_and_future_df['control_lag'].fillna(method='ffill')
-    
-    missing_indices = past_and_future_df[past_and_future_df['tsd'].isna()].index
-    past_and_future_df.loc[missing_indices, 'tsd'] = past_and_future_df['control_lag'].loc[missing_indices]
-    
-    
+    target_map = past_and_future_df["tsd"].to_dict()
+    past_and_future_df["control_lag"] = (
+        past_and_future_df.index - pd.Timedelta(days=prediction_days)
+    ).map(target_map)
+    past_and_future_df["control_lag"] = past_and_future_df["control_lag"].fillna(
+        method="ffill"
+    )
+
+    missing_indices = past_and_future_df[past_and_future_df["tsd"].isna()].index
+    past_and_future_df.loc[missing_indices, "tsd"] = past_and_future_df[
+        "control_lag"
+    ].loc[missing_indices]
+
     past_and_future_df = create_lag_features(past_and_future_df)
-    #past_and_future_df.drop('is_holiday', axis=1, inplace=True)
-    past_and_future_df = past_and_future_df.query('isFuture').copy()
-    
+    # past_and_future_df.drop('is_holiday', axis=1, inplace=True)
+    past_and_future_df = past_and_future_df.query("isFuture").copy()
+
     # Make Predictions
     past_and_future_df = past_and_future_df[features].dropna()
     print("Forecasting over prediction days...")
-    past_and_future_df['prediction'] = trained_model.predict(past_and_future_df)
-    
-    # Plot past and future TSD electircity 
+    past_and_future_df["prediction"] = trained_model.predict(past_and_future_df)
+
+    # Plot past and future TSD electircity
     past_timeframe = df.index
     past_and_future_df.sort_index()
     forecast_timeframe = past_and_future_df.index
-    
-    past_and_forecasted_df = pd.DataFrame(index=past_timeframe.append(forecast_timeframe))
-    past_and_forecasted_df['tsd'] = pd.concat([df['tsd'], past_and_future_df['prediction']])
-    past_and_forecasted_df['type'] = ['Actual']*len(past_timeframe) + ['Predicted']*len(forecast_timeframe)
 
-    fig = px.line(past_and_forecasted_df,
-                  x=past_and_forecasted_df.index,
-                  y='tsd',
-                  color='type',
-                  title="Actual vs Predicted TSD",
+    past_and_forecasted_df = pd.DataFrame(
+        index=past_timeframe.append(forecast_timeframe)
+    )
+    past_and_forecasted_df["tsd"] = pd.concat(
+        [df["tsd"], past_and_future_df["prediction"]]
+    )
+    past_and_forecasted_df["type"] = ["Actual"] * len(past_timeframe) + [
+        "Predicted"
+    ] * len(forecast_timeframe)
+
+    fig = px.line(
+        past_and_forecasted_df,
+        x=past_and_forecasted_df.index,
+        y="tsd",
+        color="type",
+        title="Actual vs Predicted TSD",
     ).update_layout(
         height=600,
-        xaxis_title='DateTime',
-        yaxis_title='Demand (MW)',
-        legend_title='Demand Type'
+        xaxis_title="DateTime",
+        yaxis_title="Demand (MW)",
+        legend_title="Demand Type",
     )
     print("Time series plot of past and forecasted TSD created")
     if plot_save == True:
         file_name = f"{plot_save_path}Actual_vs_Predicted_TSD.html"
         fig.write_html(file_name)
         print("Time series plot of past and forecasted TSD saved")
-    
+
     return fig
-
-
 
 
 """

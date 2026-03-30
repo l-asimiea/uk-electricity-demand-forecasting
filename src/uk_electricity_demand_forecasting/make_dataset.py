@@ -1,20 +1,20 @@
 # Main function
 def read_and_proc_csvdata(file_path):
-
-    import pandas as pd
     import os
 
-    """ 
+    import pandas as pd
+
+    """
     This function reads and processes the electricity data and processes it into a
-    a form useful for analysis up to and before the feature engineering stage of 
+    a form useful for analysis up to and before the feature engineering stage of
     the project.
-    
-    Inputs: 
+
+    Inputs:
         file_path:      path the the csv file location
-    
+
     Outputs:
         cln_df:         processed data output and saved in pickle format in
-                        energy_forecasting/data/interim 
+                        energy_forecasting/data/interim
     """
 
     # 1. Read data file

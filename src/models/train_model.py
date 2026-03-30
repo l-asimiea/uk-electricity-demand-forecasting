@@ -1,7 +1,7 @@
 """
-Model Development 
+Model Development
 This script contains code to train ML models using processed electricity data
-in search for an adequate forecasting model. 
+in search for an adequate forecasting model.
 """
 
 # Imported Libraries
@@ -11,96 +11,112 @@ import datetime
 import plotly.express as px
 import plotly.io as pio
 import warnings
-import os 
+import os
 from src.visualisation.plot_utils import plotly_user_standard_settings
+
 plotly_user_standard_settings(pio, px)
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
-from src.models.model_utils import model_evaluator, model_feature_importance, plot_actual_vs_model_pred
+from src.models.model_utils import (
+    model_evaluator,
+    model_feature_importance,
+    plot_actual_vs_model_pred,
+)
 import pickle
 import joblib
 
 # Settings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 plot_save_path = os.path.join(project_root, "reports/figures/")
 
-#--------------------------------------------------------------------------------  
-# Load data 
+# --------------------------------------------------------------------------------
+# Load data
 data_file_path = f"{project_root}/data/processed/uk_data_fe_processed.pkl"
 df = pd.read_pickle(data_file_path)
- 
-# Extract features and target variables 
+
+# Extract features and target variables
 features = [
-    'lag_1day', 'lag_1hour', 'lag_1week', 'lag_1year', 'lag_2year', 'rolling_mean_1day'
+    "lag_1day",
+    "lag_1hour",
+    "lag_1week",
+    "lag_1year",
+    "lag_2year",
+    "rolling_mean_1day",
 ]
-target = 'tsd'
+target = "tsd"
 df = df.sort_index()
 X = df[features].dropna()
-y = df[target].dropna().loc[X.index]         
- 
+y = df[target].dropna().loc[X.index]
+
 # Define models
 rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
 gb_model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-xgb_model = XGBRegressor(n_estimators=100,random_state=42)
+xgb_model = XGBRegressor(n_estimators=100, random_state=42)
 
-# Stores for model outputs 
+# Stores for model outputs
 rf_results = []
 gb_results = []
 xgb_results = []
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # Create time-series split cross validation
-tscv = TimeSeriesSplit(n_splits=5, test_size =48*365*1, gap=48)
+tscv = TimeSeriesSplit(n_splits=5, test_size=48 * 365 * 1, gap=48)
 
 # Loop through the folds...
 for fold, (train_idx, test_idx) in enumerate(tscv.split(X), start=1):
     print(f"Running Fold {fold}...")
-    print('Spliting data into training and testing data subsets...')
+    print("Spliting data into training and testing data subsets...")
     X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
     y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-               
+
     # Run Models
     try:
         # Random Forest
-        print('Running Random Forest model...')
+        print("Running Random Forest model...")
         rf_model.fit(X_train, y_train)
         rf_pred = rf_model.predict(X_test)
-        rf_results.append(model_evaluator(fold, y_test, rf_pred, rf_model, 'random_forest'))  
+        rf_results.append(
+            model_evaluator(fold, y_test, rf_pred, rf_model, "random_forest")
+        )
     except Exception as e:
         print(f"Random Forest model failed on fold {fold}: {e}")
-        
+
     try:
         # Gradient Boosting
-        print('Running Gradient Boost model...')
+        print("Running Gradient Boost model...")
         gb_model.fit(X_train, y_train)
         gb_pred = gb_model.predict(X_test)
-        gb_results.append(model_evaluator(fold, y_test, gb_pred, gb_model, 'gradient_boost'))   
+        gb_results.append(
+            model_evaluator(fold, y_test, gb_pred, gb_model, "gradient_boost")
+        )
     except Exception as e:
         print(f"Gradient Boostng model failed on fold {fold}: {e}")
-        
+
     try:
         # XGBoost
-        print('Running XGBoost model...')
+        print("Running XGBoost model...")
         xgb_model.fit(X_train, y_train)
         xgb_pred = xgb_model.predict(X_test)
-        xgb_results.append(model_evaluator(fold, y_test, xgb_pred, xgb_model, 'xgboost'))
+        xgb_results.append(
+            model_evaluator(fold, y_test, xgb_pred, xgb_model, "xgboost")
+        )
     except Exception as e:
         print(f"XGBoost model failed on fold {fold}: {e}")
-          
+
 # Model training complete
-print('Model training complete')
+print("Model training complete")
 
 # Best Model
-best_model_vars = rf_results[0]   # best model - rf_model fold 1 
+best_model_vars = rf_results[0]  # best model - rf_model fold 1
 print(f"Result of the best model:{best_model_vars}")
 
 
 # Feature Importance - Best Model...
-print('Generating feature importance from best model')
-best_model_importance, fig = model_feature_importance(X,best_model_vars)
+print("Generating feature importance from best model")
+best_model_importance, fig = model_feature_importance(X, best_model_vars)
 fig.show()
 
 
@@ -110,7 +126,7 @@ Feature importance plots of the best 2 models (gradient boost and random forest 
 showed that the lag features offered the most importance to the model training 
 especially lag1
 """
-#--------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # Visualise Model Verification Performance
 model_vars = best_model_vars
 fig = plot_actual_vs_model_pred(model_vars, X, y)
@@ -128,7 +144,7 @@ Visually, both models exhbited regions of mainly over prediction than under pred
 at the peaks of the actual TSD with gradient boost performing better (i.e., being closer 
 to the actual TSD).
 """
-#------------------------------------------------------------------
+# ------------------------------------------------------------------
 # Model Optimisation using GridSearchCV
 # Define hyperparameter grid for best Gradient Boost model
 """ 
@@ -153,20 +169,15 @@ print("Best Gradient Boost Parameters:", grid_search.best_params_)
 """
 
 
+# --------------------------------------------------------------------------
+# Save best model only
+# best_model = best_model_vars['model']
+joblib.dump(
+    best_model_vars["model"],
+    f"{project_root}/models/{best_model_vars['model_name']}_best_model.pkl",
+)
 
-
-#--------------------------------------------------------------------------
-# Save best model only 
-#best_model = best_model_vars['model']
-joblib.dump(best_model_vars['model'], f"{project_root}/models/{best_model_vars['model_name']}_best_model.pkl")
-
-# alternate - save model and its metrics 
-model_save_filepath = '.pkl'
-with open(model_save_filepath, 'wb') as file:
+# alternate - save model and its metrics
+model_save_filepath = ".pkl"
+with open(model_save_filepath, "wb") as file:
     pickle.dump(best_model_vars)
-
-
-
-  
-
-
