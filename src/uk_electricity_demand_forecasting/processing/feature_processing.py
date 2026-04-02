@@ -11,10 +11,11 @@ Output:
 """
 
 # Imported Libraries
-import pandas as pd
+import polars as pl
 import datetime
 import numpy as np
 import os
+from pydantic import BaseModel
 import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.io as pio
@@ -28,6 +29,51 @@ plotly_user_standard_settings(pio, px)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 save_path = os.path.join(project_root, "reports/figures/")
 
+
+
+class FeaturingProcessor(BaseModel):
+    input_data: pl.DataFrame
+    
+    
+    def temporal_features_schema() -> dict:
+        """Defines the schema for the temporal features."""
+        return {
+            "hours": pl.Int8,
+            "day_of_week": pl.Int8,
+            "day_of_month": pl.Int8,
+            "day_of_year": pl.Int16,
+            "week": pl.Int8,
+            "month": pl.Int8,
+            "quarter": pl.Int8,
+            "year": pl.Int16,
+        }
+    
+    def create_temporal_features(self) -> pl.DataFrame:
+        """Creates time features; hour, day, week, month and year
+        as well as lag features lag1, 2, 3 and 5
+        Args:
+        df:         data as a pandas dataframe
+
+        Return:
+        data_uk:    the feature engineered data
+        """
+        
+        data = self.input_data.with_columns(
+            pl.col("period_time").dt.hour().alias("hours"),
+            pl.col("timestamp").dt.weekday().alias("day_of_week"),
+            pl.col("timestamp").dt.day().alias("day_of_month"),
+            pl.col("timestamp").dt.ordinal_day().alias("day_of_year"),
+            pl.col("timestamp").dt.week().alias("week"),
+            pl.col("timestamp").dt.month().alias("month"),
+            pl.col("timestamp").dt.quarter().alias("quarter"),
+            pl.col("timestamp").dt.year().alias("year"),
+            
+        )
+        
+        return data.cast(self.temporal_features_schema())
+    
+    def 
+        
 
 # ---------------------------------------------------------------------------
 def create_temporal_features(df, save_data=False):
