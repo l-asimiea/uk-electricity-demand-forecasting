@@ -5,149 +5,188 @@ in search for an adequate forecasting model.
 """
 
 # Imported Libraries
+import os
+import warnings
+from typing import Literal
+
 import numpy as np
-import pandas as pd
-import datetime
 import plotly.express as px
 import plotly.io as pio
-import warnings
-import os
+import polars as pl
+from pydantic import BaseModel, ConfigDict, Field
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
+from xgboost import XGBRegressor
+
+from src.models.model_utils import (
+    model_evaluator,
+)
 from src.visualisation.plot_utils import plotly_user_standard_settings
 
 plotly_user_standard_settings(pio, px)
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from xgboost import XGBRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
-from src.models.model_utils import (
-    model_evaluator,
-    model_feature_importance,
-    plot_actual_vs_model_pred,
-)
-import pickle
-import joblib
 
 # Settings
 warnings.filterwarnings("ignore")
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 plot_save_path = os.path.join(project_root, "reports/figures/")
 
-# --------------------------------------------------------------------------------
-# Load data
-data_file_path = f"{project_root}/data/processed/uk_data_fe_processed.pkl"
-df = pd.read_pickle(data_file_path)
+MODEL_MAPPING = {
+    "random_forest": RandomForestRegressor,
+    "gradient_boost": GradientBoostingRegressor,
+    "xgboost": XGBRegressor,
+}
 
-# Extract features and target variables
-features = [
-    "lag_1day",
-    "lag_1hour",
-    "lag_1week",
-    "lag_1year",
-    "lag_2year",
-    "rolling_mean_1day",
-]
-target = "tsd"
-df = df.sort_index()
-X = df[features].dropna()
-y = df[target].dropna().loc[X.index]
 
-# Define models
-rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
-gb_model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-xgb_model = XGBRegressor(n_estimators=100, random_state=42)
+class Model(BaseModel):
+    training_data: pl.DataFrame
 
-# Stores for model outputs
-rf_results = []
-gb_results = []
-xgb_results = []
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-# ----------------------------------------------------------------------
-# Create time-series split cross validation
-tscv = TimeSeriesSplit(n_splits=5, test_size=48 * 365 * 1, gap=48)
-
-# Loop through the folds...
-for fold, (train_idx, test_idx) in enumerate(tscv.split(X), start=1):
-    print(f"Running Fold {fold}...")
-    print("Spliting data into training and testing data subsets...")
-    X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-    y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-
-    # Run Models
-    try:
-        # Random Forest
-        print("Running Random Forest model...")
-        rf_model.fit(X_train, y_train)
-        rf_pred = rf_model.predict(X_test)
-        rf_results.append(
-            model_evaluator(fold, y_test, rf_pred, rf_model, "random_forest")
+    class ModelConfig(BaseModel):
+        mode: Literal["predict_only", "train_and_predict", "retrain_and_predict"] = Field(
+            default="predict_only",
+            description="Execution mode — controls whether training is triggered.",
         )
-    except Exception as e:
-        print(f"Random Forest model failed on fold {fold}: {e}")
 
-    try:
-        # Gradient Boosting
-        print("Running Gradient Boost model...")
-        gb_model.fit(X_train, y_train)
-        gb_pred = gb_model.predict(X_test)
-        gb_results.append(
-            model_evaluator(fold, y_test, gb_pred, gb_model, "gradient_boost")
+        model_type: Literal["lightgbm", "xgboost", "random_forest"] = Field(
+            default="lightgbm",
+            description="ML base model to use.",
         )
-    except Exception as e:
-        print(f"Gradient Boostng model failed on fold {fold}: {e}")
-
-    try:
-        # XGBoost
-        print("Running XGBoost model...")
-        xgb_model.fit(X_train, y_train)
-        xgb_pred = xgb_model.predict(X_test)
-        xgb_results.append(
-            model_evaluator(fold, y_test, xgb_pred, xgb_model, "xgboost")
+        model_params: dict = Field(
+            default={"n_estimators": 100, "max_depth": None, "random_state": 42},
+            description="model type and hyperparameters for the selected model type.",
         )
-    except Exception as e:
-        print(f"XGBoost model failed on fold {fold}: {e}")
+        features: list[str] = Field(..., description="List of feature column names to use for training and prediction.")
+        ...
 
-# Model training complete
-print("Model training complete")
+    settings: ModelConfig = Field(default_factory=ModelConfig)
 
-# Best Model
-best_model_vars = rf_results[0]  # best model - rf_model fold 1
-print(f"Result of the best model:{best_model_vars}")
+    def setup_model(self):
+        """Initializes the model based on the specified type and parameters."""
+        model = MODEL_MAPPING.get(self.settings.model_type)
+        return model(**self.settings.model_params)
+
+    def input_data_schema():
+        """Defines the expected schema for the input data."""
+        return ...
+
+    def model_evaluator(fold, y_test, y_pred, model):
+        """
+        This function takes in model training information involving
+        cross validation (cv) splits and calculates model metrics.
+
+        Args:
+        fold:       the fold count from the cv split
+        y_test:     portion of the target variable used for testing
+        y_pred:     portion of the target varibale used for prediction
+        model:      the trained model
+        model_name: the name of the trained modelß
+
+        Return:
+        {model_name, model, fold, RMSE, MAPE, R2}
+        """
+        mae = mean_absolute_error(y_test, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        r2 = r2_score(y_test, y_pred)
+        mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+
+        return {
+            "model": model,
+            "fold": fold,
+            "MAE": round(mae, 2),
+            "RMSE": round(rmse, 2),
+            "MAPE": round(mape, 2),
+            "R2": round(r2, 2),
+        }
+
+    def get_training_features_and_target(self):
+        """Extracts features and target variables from the training data."""
+
+        df = self.training_data.sort("settlement_datetime")
+
+        features = df.select(self.settings.features)
+        target = df.select(pl.col("transmission_demand"))
+
+        return features, target
+
+    def train_model(self, model, features, target):
+        """Trains a model on the training_data."""
+
+        # Apply time-series split cross validation
+        tscv = TimeSeriesSplit(n_splits=5, test_size=48 * 365 * 1, gap=48)
+
+        # Loop through cv folds
+        for fold, (train_id, test_id) in enumerate(tscv.split(features), start=1):
+            print(f"Running Fold {fold} ...")
+            print("Splitting data intro training and testing subsets ...")
+            x_train, x_test = features.take(train_id), features.take(test_id)
+            y_train, y_test = target.take(train_id), target.take(test_id)
+
+            model_result = []
+            try:
+                model.fit(x_train, y_train)
+                model_pred = model.predict(x_test)
+                model_result.append(model_evaluator(fold, y_test, model_pred, model))
+            except Exception as e:
+                print(f"{self.settings.model_type} model training failed on fold {fold}: {e}")
+
+        return model_result
+
+    def predict():
+        """Generates prediction(s) using a trained model."""
+        return ...
+
+    def save_model():
+        """Saves the trained model to a file."""
+        return ...
+
+    def load_model():
+        """Loads a model from a file."""
+        return ...
+
+    def execute(self):
+        features, target = self.get_training_features_and_target()
+        model = self.setup_model()
+        model_results = self.train_model(model, features, target)
+
+        return model_results
 
 
-# Feature Importance - Best Model...
-print("Generating feature importance from best model")
-best_model_importance, fig = model_feature_importance(X, best_model_vars)
-fig.show()
+# # Feature Importance - Best Model...
+# print("Generating feature importance from best model")
+# best_model_importance, fig = model_feature_importance(X, best_model_vars)
+# fig.show()
 
 
 """
 Note:
-Feature importance plots of the best 2 models (gradient boost and random forest at 5th folds) 
-showed that the lag features offered the most importance to the model training 
+Feature importance plots of the best 2 models (gradient boost and random forest at 5th folds)
+showed that the lag features offered the most importance to the model training
 especially lag1
 """
 # --------------------------------------------------------------------------
 # Visualise Model Verification Performance
-model_vars = best_model_vars
-fig = plot_actual_vs_model_pred(model_vars, X, y)
-file_name = f"{plot_save_path}Actual_vs_Predicted_TSD.html"
-fig.show()
-fig.write_html(file_name)
+# model_vars = best_model_vars
+# fig = plot_actual_vs_model_pred(model_vars, X, y)
+# file_name = f"{plot_save_path}Actual_vs_Predicted_TSD.html"
+# fig.show()
+# fig.write_html(file_name)
 
 """
-Note: 
-The actual TSD was compared to predictions made using the best model(Gradient Boost fold 5) and 
-the second best model (Random Forest fold 5). 
-The comparison showed that the gradient boost and random forest exibited 5.6% and 6% 
+Note:
+The actual TSD was compared to predictions made using the best model(Gradient Boost fold 5) and
+the second best model (Random Forest fold 5).
+The comparison showed that the gradient boost and random forest exibited 5.6% and 6%
 average absolute error respectively with mean absolute error of 1705.6MW and 1617MW respectively.
 Visually, both models exhbited regions of mainly over prediction than under predictions
-at the peaks of the actual TSD with gradient boost performing better (i.e., being closer 
+at the peaks of the actual TSD with gradient boost performing better (i.e., being closer
 to the actual TSD).
 """
 # ------------------------------------------------------------------
 # Model Optimisation using GridSearchCV
 # Define hyperparameter grid for best Gradient Boost model
-""" 
+"""
 # Not Done due to high computational cost
 param_grid = {
     'n_estimators': [100, 200],
@@ -172,12 +211,12 @@ print("Best Gradient Boost Parameters:", grid_search.best_params_)
 # --------------------------------------------------------------------------
 # Save best model only
 # best_model = best_model_vars['model']
-joblib.dump(
-    best_model_vars["model"],
-    f"{project_root}/models/{best_model_vars['model_name']}_best_model.pkl",
-)
+# joblib.dump(
+#     best_model_vars["model"],
+#     f"{project_root}/models/{best_model_vars['model_name']}_best_model.pkl",
+# )
 
-# alternate - save model and its metrics
-model_save_filepath = ".pkl"
-with open(model_save_filepath, "wb") as file:
-    pickle.dump(best_model_vars)
+# # alternate - save model and its metrics
+# model_save_filepath = ".pkl"
+# with open(model_save_filepath, "wb") as file:
+#     pickle.dump(best_model_vars)
